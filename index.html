@@ -1,0 +1,357 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scanner QR Absensi</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      background: #edf2ff;
+      min-height: 100vh;
+      padding: 20px 14px;
+    }
+
+    .app {
+      width: 100%;
+      max-width: 450px;
+      margin: auto;
+      background: white;
+      border-radius: 22px;
+      padding: 22px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.08);
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 22px;
+    }
+
+    .header h2 {
+      color: #2457db;
+      margin-bottom: 7px;
+    }
+
+    .header p {
+      color: #888;
+      font-size: 13px;
+    }
+
+    #reader {
+      width: 100%;
+      min-height: 100px;
+      overflow: hidden;
+      border-radius: 14px;
+    }
+
+    #reader video {
+      border-radius: 12px;
+    }
+
+    select, button {
+      width: 100%;
+      min-height: 48px;
+      padding: 12px;
+      margin-top: 12px;
+      border-radius: 12px;
+      font-size: 15px;
+    }
+
+    select {
+      border: 1px solid #ddd;
+      background: white;
+    }
+
+    button {
+      border: none;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .btn-start {
+      background: #2563eb;
+    }
+
+    .btn-stop {
+      background: #ef4444;
+    }
+
+    .hasil {
+      margin-top: 20px;
+      padding: 16px;
+      background: #eff6ff;
+      border-radius: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .hasil h3 {
+      color: #2457db;
+      margin-bottom: 10px;
+    }
+
+    #hasilScan {
+      color: #333;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #status {
+      text-align: center;
+      margin-top: 15px;
+      color: #666;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .btn-reset {
+      background: #64748b;
+    }
+  </style>
+</head>
+
+<body>
+
+  <main class="app">
+
+    <div class="header">
+      <h2>QR Scanner</h2>
+      <p>Scan QR Code untuk absensi siswa</p>
+    </div>
+
+    <div id="reader"></div>
+
+    <select id="pilihKamera">
+      <option value="">Kamera otomatis</option>
+    </select>
+
+    <button
+      id="btnMulai"
+      class="btn-start"
+      type="button"
+      onclick="mulaiScan()">
+      BUKA KAMERA
+    </button>
+
+    <button
+      id="btnStop"
+      class="btn-stop"
+      type="button"
+      onclick="berhentiScan()"
+      disabled>
+      TUTUP KAMERA
+    </button>
+
+    <div class="hasil">
+      <h3>Hasil Scan QR</h3>
+      <p id="hasilScan">Belum ada QR Code yang dipindai.</p>
+    </div>
+
+    <button
+      class="btn-reset"
+      type="button"
+      onclick="resetHasil()">
+      RESET HASIL
+    </button>
+
+    <p id="status">Status: Kamera belum aktif.</p>
+
+  </main>
+
+<script>
+  let scanner = null;
+  let kameraAktif = false;
+  let sedangProses = false;
+  let kameraList = [];
+
+  const statusText = document.getElementById("status");
+  const hasilText = document.getElementById("hasilScan");
+  const pilihKamera = document.getElementById("pilihKamera");
+  const btnMulai = document.getElementById("btnMulai");
+  const btnStop = document.getElementById("btnStop");
+
+  function ubahStatus(pesan) {
+    statusText.textContent = "Status: " + pesan;
+  }
+
+  async function mulaiScan() {
+    if (kameraAktif || sedangProses) return;
+
+    sedangProses = true;
+    btnMulai.disabled = true;
+    ubahStatus("Meminta izin kamera...");
+
+    try {
+      if (typeof Html5Qrcode === "undefined") {
+        throw new Error("Library QR Scanner gagal dimuat. Periksa koneksi internet.");
+      }
+
+      if (!scanner) {
+        scanner = new Html5Qrcode("reader");
+      }
+
+      // Ambil daftar kamera
+      kameraList = await Html5Qrcode.getCameras();
+
+      if (!kameraList || kameraList.length === 0) {
+        throw new Error("Kamera tidak ditemukan.");
+      }
+
+      // Isi pilihan kamera
+      pilihKamera.innerHTML = "";
+
+      kameraList.forEach((kamera, index) => {
+        const option = document.createElement("option");
+        option.value = kamera.id;
+        option.textContent =
+          kamera.label || "Kamera " + (index + 1);
+        pilihKamera.appendChild(option);
+      });
+
+      // Prioritaskan kamera belakang
+      const belakang = kameraList.find(k =>
+        /back|rear|environment|belakang/i.test(k.label || "")
+      );
+
+      const kameraId = belakang
+        ? belakang.id
+        : kameraList[0].id;
+
+      pilihKamera.value = kameraId;
+
+      await jalankanKamera(kameraId);
+
+    } catch (error) {
+      ubahStatus(error.message || "Gagal membuka kamera.");
+      btnMulai.disabled = false;
+    } finally {
+      sedangProses = false;
+    }
+  }
+
+  async function jalankanKamera(kameraId) {
+    try {
+      ubahStatus("Mengaktifkan kamera...");
+
+      await scanner.start(
+        kameraId,
+        {
+          fps: 10,
+          qrbox: function(lebar, tinggi) {
+            const ukuran = Math.min(lebar, tinggi, 250);
+            return {
+              width: ukuran,
+              height: ukuran
+            };
+          },
+          aspectRatio: 1
+        },
+        function(teksQR) {
+          hasilScan(teksQR);
+        },
+        function() {
+          // Tidak perlu menampilkan pesan setiap frame gagal.
+        }
+      );
+
+      kameraAktif = true;
+      btnMulai.disabled = true;
+      btnStop.disabled = false;
+      ubahStatus("Kamera aktif. Arahkan QR Code ke kamera.");
+
+    } catch (error) {
+      kameraAktif = false;
+      btnMulai.disabled = false;
+      btnStop.disabled = true;
+      throw error;
+    }
+  }
+
+  async function berhentiScan() {
+    if (!scanner || !kameraAktif) return;
+
+    try {
+      ubahStatus("Menutup kamera...");
+
+      await scanner.stop();
+
+      kameraAktif = false;
+      btnMulai.disabled = false;
+      btnStop.disabled = true;
+
+      ubahStatus("Kamera berhasil ditutup.");
+
+    } catch (error) {
+      ubahStatus("Gagal menutup kamera: " + error.message);
+    }
+  }
+
+  function hasilScan(teks) {
+    if (sedangProses || !teks) return;
+
+    sedangProses = true;
+
+    hasilText.textContent = teks;
+    ubahStatus("QR Code berhasil dibaca!");
+
+    // Bunyi notifikasi
+    try {
+      const audio = new Audio(
+        "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
+      );
+      audio.play().catch(() => {});
+    } catch (error) {}
+
+    // Jeda agar QR yang sama tidak dibaca berulang
+    setTimeout(() => {
+      sedangProses = false;
+    }, 2000);
+  }
+
+  function resetHasil() {
+    hasilText.textContent = "Belum ada QR Code yang dipindai.";
+    ubahStatus(kameraAktif ? "Kamera masih aktif." : "Kamera belum aktif.");
+  }
+
+  // Ganti kamera saat scanner sedang berjalan
+  pilihKamera.addEventListener("change", async function() {
+    if (!kameraAktif || !this.value) return;
+
+    try {
+      await scanner.stop();
+      kameraAktif = false;
+      btnStop.disabled = true;
+
+      await jalankanKamera(this.value);
+
+    } catch (error) {
+      ubahStatus("Gagal mengganti kamera: " + error.message);
+      btnMulai.disabled = false;
+    }
+  });
+
+  // Bersihkan kamera saat halaman ditutup
+  window.addEventListener("pagehide", function() {
+    if (scanner && kameraAktif) {
+      scanner.stop().catch(() => {});
+    }
+  });
+</script>
+
+</body>
+</html>
